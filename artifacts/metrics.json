@@ -1,0 +1,18 @@
+{
+  "experiment": "telemetry",
+  "iterations": 122,
+  "temporal_mae": 90.00251612238527,
+  "temporal_real_mae": 89.16283817466743,
+  "baseline_mae": 97.59940209267563,
+  "baseline_real_mae": 95.54654654654655,
+  "cutoff": "2026-01-06 15:55:00",
+  "early_count": 3055,
+  "late_count": 1338,
+  "late_real_count": 333,
+  "purged_count": 41,
+  "temporal_test_mae": 78.5010579240069,
+  "temporal_test_baseline_mae": 88.19417475728156,
+  "temporal_test_count": 103,
+  "non_temporal_test_mae": 79.42241634098511,
+  "non_temporal_test_baseline_mae": 93.35977337110482
+}

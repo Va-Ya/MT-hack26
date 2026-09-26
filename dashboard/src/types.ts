@@ -1,0 +1,8 @@
+export type Cell={cell_id:string;lat:number;lon:number;risk_score:number;vehicles:number;avg_speed:number|null;current_delay:number;predicted_delay:number|null;risk_factors:Record<string,number>;risk_trend:number|null;trend:string;recommendations:string[];vehicle_ids:string[];horizon_min_s:number|null;horizon_max_s:number|null;current_delay_known_count:number};
+export type Vehicle={tr_id:string;lat?:number;lon?:number;speed?:number;timestamp:string;current_delay:number;prediction?:{predicted_delay_s:number;target_stop_id:string;prediction_horizon_s:number}};
+export type Prediction={T:string;tr_id:string;target_stop_id:string;prediction:number;actual:number|null;absolute_error:number|null;lead_time_seconds:number|null;speed:number|null;sample_id:string|null};
+export type Metrics={samples:number;total_ms:{mean:number;p50:number;p95:number}|null;inference_ms:{mean:number;p50:number;p95:number}|null;feature_ms:{mean:number;p50:number;p95:number}|null;replay_mae:number|null;observed_outcomes:number};
+export type Health={connection:string;last_telemetry_timestamp:string|null;model_version:string|null;seconds_since_last_packet:number|null;ml_status:string;active_vehicles:number;hotspots_count:number;mode:string};
+export type Replay={mode:string;status:string;speed:number;timestamp:string;start:string;end:string;error:string|null};
+export type ZonePoint=Cell&{timestamp:string};
+export type SearchResult={type:string;id:string;label:string;tr_id?:string;lat:number|null;lon:number|null};

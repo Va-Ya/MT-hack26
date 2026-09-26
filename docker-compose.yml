@@ -1,0 +1,51 @@
+name: transport-predictor
+services:
+  ml:
+    build: .
+    command: ["python", "-m", "ml.prepare"]
+    volumes:
+      - ./data/raw:/app/data/raw:ro
+      - ./artifacts:/app/artifacts
+      - ./models:/app/models
+  backend:
+    build: .
+    depends_on:
+      ml:
+        condition: service_completed_successfully
+    environment:
+      DATA_DIR: /app/data/raw
+      REPLAY_SPLIT: test
+      INGEST_TOKEN: ${INGEST_TOKEN:-}
+    volumes:
+      - ./data/raw:/app/data/raw:ro
+      - ./artifacts:/app/artifacts
+      - ./models:/app/models:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  dashboard:
+    build:
+      context: ./dashboard
+      args:
+        VITE_GOOGLE_MAPS_API_KEY: ${VITE_GOOGLE_MAPS_API_KEY:-}
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:80"
+    restart: unless-stopped
+  emulator:
+    build: .
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      INGEST_TOKEN: ${INGEST_TOKEN:-}
+    command: ["python", "-m", "emulator.managed"]
+    volumes:
+      - ./data/raw:/app/data/raw:ro

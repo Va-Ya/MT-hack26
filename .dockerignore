@@ -1,0 +1,9 @@
+.venv
+.git
+data
+artifacts
+dashboard
+__pycache__
+.pytest_cache
+*.zip
+*.tar
