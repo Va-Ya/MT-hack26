@@ -1,26 +1,21 @@
-"""Compose preflight: verify checked-in model, or train reproducibly if absent."""
+"""Production preflight: never train or read labels during service startup."""
 import json
-import subprocess
-import sys
 from pathlib import Path
-from ml.data_audit import audit
-from ml.make_submission import make_submission
 
 
 def main():
-    data = Path("data/raw")
-    required = ["train/traffic.csv", "train/schedule.csv", "labels/labels_train.csv",
-                "test/traffic.csv", "test/schedule.csv", "labels/labels_test.csv",
-                "validate/traffic.csv", "validate/schedule_plan.csv", "validate/points.csv", "sample_submission.csv"]
-    missing = [str(data / p) for p in required if not (data / p).exists()]
-    if missing:
-        raise SystemExit("Extract the supplied dataset into data/raw first. Missing: " + ", ".join(missing))
-    audit(data, Path("artifacts"))
-    if not Path("models/best_model.cbm").exists() or not Path("models/metadata.json").exists():
-        subprocess.run([sys.executable, "-m", "ml.build_dataset"], check=True)
-        subprocess.run([sys.executable, "-m", "ml.train"], check=True)
-    make_submission(data)
-    print("ML preflight complete", flush=True)
+    import hashlib
+    from ml.model import Predictor
+    metadata=json.loads(Path('models/metadata.json').read_text(encoding='utf-8'))
+    for member in metadata.get('members', []):
+        filename=member['file']
+        if Path(filename).name!=filename:
+            raise ValueError('Model filename must be a basename')
+        digest=hashlib.sha256((Path('models')/filename).read_bytes()).hexdigest()
+        if digest!=member['sha256']:
+            raise ValueError('Model hash mismatch: '+filename)
+    predictor=Predictor()
+    print('ML preflight complete: '+predictor.version, flush=True)
 
 
 if __name__ == "__main__":

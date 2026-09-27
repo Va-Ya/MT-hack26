@@ -1,0 +1,5 @@
+catboost==1.2.10
+pandas>=2.2,<4
+numpy>=1.26,<3
+pyarrow>=17
+pytest>=8,<10

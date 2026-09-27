@@ -6,20 +6,26 @@ import math
 import threading
 import numpy as np
 import pandas as pd
-from ml.features import FeatureBuilder, timestamp, HISTORY_SECONDS
+from ml.features import timestamp, HISTORY_SECONDS
+from ml.fast_features import FastFeatureBuilder as FeatureBuilder
 from ml.model import Predictor
+from ml.stop_detection import StopDetector
 
 class StreamingPredictor:
-    def __init__(self, schedule, model=None, log_path="artifacts/prediction_log.parquet"):
+    def __init__(self, schedule, model=None, log_path="artifacts/prediction_log.parquet",detect_stops=False):
         self.model=model or Predictor()
         s=schedule[["tr_id","tt_action_item_id","time_begin","geom","building_address"]].copy()
         s["time_begin"]=pd.to_datetime(s.time_begin,format="mixed")
         self.schedule={str(k):v.sort_values("time_begin") for k,v in s.groupby("tr_id")}
+        self.plan_schedule=FeatureBuilder(pd.DataFrame(),s).plans
         self.history=defaultdict(list)
         self.vehicles={}; self.watermarks={}; self.current_delay={}; self.delay_times={}
+        self.delay_available_times={}
         self.log=deque(maxlen=20000); self.observed={}
+        self.pending_log_writes=0
         self.latencies=deque(maxlen=5000); self.log_path=Path(log_path)
         self.lock=threading.RLock(); self.clock=None
+        self.stop_detector=StopDetector(s) if detect_stops else None
 
     def advance(self, value):
         t=timestamp(value)
@@ -32,7 +38,9 @@ class StreamingPredictor:
         available=s[(s.time_begin>T+pd.Timedelta(minutes=10))&(s.time_begin<=T+pd.Timedelta(minutes=15))]
         if available.empty: return None
         stop=available.iloc[0]
-        return dict(T=T,tr_id=str(tr_id),target_stop_id=str(stop.tt_action_item_id),target_time_begin=stop.time_begin,geom=stop.geom,cur_dev_s=self.current_delay.get(str(tr_id),0.0), current_delay_known=str(tr_id) in self.current_delay)
+        tr=str(tr_id)
+        known=tr in self.current_delay and self.delay_available_times.get(tr,self.delay_times.get(tr,T))<=T
+        return dict(T=T,tr_id=tr,target_stop_id=str(stop.tt_action_item_id),target_time_begin=stop.time_begin,geom=stop.geom,cur_dev_s=self.current_delay.get(tr,0.0) if known else 0.0,current_delay_known=known)
 
     def ingest(self, record):
         with self.lock:
@@ -61,6 +69,11 @@ class StreamingPredictor:
                 speed=record.get("speed")
                 state.update(lat=record["lat"],lon=record["lon"],speed=speed if speed is not None and 0<=speed<=130 else None,location_timestamp=str(t))
             self.vehicles[tr]=state
+            if self.stop_detector:
+                observed=self.stop_detector.ingest(record,available_at)
+                if observed:
+                    self.observe(observed)
+                    self.vehicles[tr]['delay_source']='gps_geofence'
             context=self.context(tr,available_at)
             prediction=self.predict_at(context) if context else None
             if not context: self.vehicles[tr].pop("prediction",None)
@@ -70,7 +83,6 @@ class StreamingPredictor:
         with self.lock:
             if context is None: return None
             start=perf_counter(); tr=str(context["tr_id"]); T=timestamp(context["T"])
-            self.advance(T)
             s=self.schedule.get(tr)
             if s is None: raise ValueError("Unknown vehicle schedule")
             match=s[s.tt_action_item_id.astype(str)==str(context["target_stop_id"])]
@@ -79,40 +91,48 @@ class StreamingPredictor:
             if timestamp(context["target_time_begin"])!=stop.time_begin: raise ValueError("Target plan mismatch")
             context={**context,"geom":stop.geom}
             rows=[r for r in self.history.get(tr,[]) if r["event_time"]<=T]
-            features=FeatureBuilder(pd.DataFrame(rows)).build(context)
+            features=FeatureBuilder(pd.DataFrame(rows),self.plan_schedule).build(context)
             after_features=perf_counter()
             value=self.model.predict(features)
             after_inference=perf_counter()
             if not math.isfinite(value): raise ValueError("Non-finite model prediction")
+            self.advance(T)
             self.latencies.append({"feature_ms":(after_features-start)*1000,"inference_ms":(after_inference-after_features)*1000,"total_ms":(after_inference-start)*1000})
             prediction={"timestamp":str(T),"tr_id":tr,"target_stop_id":str(context["target_stop_id"]),"predicted_delay_s":value,"prediction_horizon_s":features["scheduled_time_to_target"],"target_time_begin":str(stop.time_begin),"model_version":self.model.version}
             known=self.delay_times.get(tr)
             if context.get("current_delay_known",True) and (known is None or T>=known):
                 self.current_delay[tr]=float(context["cur_dev_s"]); self.delay_times[tr]=T
+                self.delay_available_times[tr]=T
             state=self.vehicles.setdefault(tr,{"tr_id":tr,"route_id":None})
             if "timestamp" not in state or T>=timestamp(state["timestamp"]):
                 state.update(timestamp=str(T),current_delay=float(context["cur_dev_s"]),current_delay_known=context.get("current_delay_known",True),prediction=prediction,speed_drop=features["speed_drop"] if math.isfinite(features["speed_drop"]) else 0)
             key=(tr,str(context["target_stop_id"]))
             actual=self.observed.get(key)
+            if actual and actual.get('available_at',actual['time'])>T:actual=None
             # Facts are never used as features. Only already observed outcomes may be attached.
             row={"T":str(T),"tr_id":tr,"route_id":None,"target_stop_id":key[1],"prediction":value,"actual":actual["delay"] if actual else None,"absolute_error":abs(value-actual["delay"]) if actual else None,"lead_time_seconds":(actual["time"]-T).total_seconds() if actual else None,"prediction_horizon_s":features["scheduled_time_to_target"],"model_version":self.model.version,"speed":features["speed_now"] if math.isfinite(features["speed_now"]) else None,"sample_id":context.get("sample_id")}
             self.log.append(row)
-            if len(self.log)%200==0: self.flush()
+            self.pending_log_writes+=1
+            if self.pending_log_writes>=200:
+                self.flush()
+                self.pending_log_writes=0
             return prediction
 
     def observe(self, event):
         with self.lock:
             observed=timestamp(event["observed_at"]); fact=timestamp(event["actual_time"])
             if fact>observed: raise ValueError("Future outcome cannot be revealed")
-            self.advance(observed); tr=str(event["tr_id"]); key=(tr,str(event["target_stop_id"]))
+            tr=str(event["tr_id"]); key=(tr,str(event["target_stop_id"]))
             s=self.schedule.get(tr)
             if s is None: raise ValueError("Unknown vehicle")
             matched=s[s.tt_action_item_id.astype(str)==key[1]]
             if len(matched)!=1: raise ValueError("Unknown target")
+            self.advance(observed)
             delay=(fact-matched.iloc[0].time_begin).total_seconds()
-            self.observed[key]={"time":fact,"delay":delay}
+            self.observed[key]={"time":fact,"delay":delay,"available_at":observed}
             if tr not in self.delay_times or fact>=self.delay_times[tr]:
                 self.current_delay[tr]=delay; self.delay_times[tr]=fact
+                self.delay_available_times[tr]=observed
                 if tr in self.vehicles:
                     self.vehicles[tr].update(current_delay=delay,current_delay_known=True)
             for row in self.log:

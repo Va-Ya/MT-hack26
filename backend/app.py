@@ -1,17 +1,23 @@
 import os
 import time
 import shutil
+import asyncio
+from contextlib import suppress
+from threading import RLock
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import Literal
 from pathlib import Path
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Header, Depends, Query
+from fastapi import FastAPI, HTTPException, Header, Depends, Query, Request, Response
 from catboost import CatBoostError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from ml.streaming import StreamingPredictor
 from backend.geo import aggregate
 from backend.history import ZoneHistory
+from backend.context import ExternalContext, EventFeed
+from backend.scenarios import Scenario, calculate
+from backend.routes import RouteNetwork, MatchRequest, match
 from backend.replay import ReplayController
 
 DATA=Path(os.getenv("DATA_DIR","data/raw"))
@@ -20,20 +26,33 @@ last_received=None
 zone_history=ZoneHistory()
 replay=None
 model_error=None
+ndtp_server=None
+external=ExternalContext()
+route_network=RouteNetwork(routes=[])
+route_lock=RLock()
+schedule_available=False
 
 @asynccontextmanager
 async def lifespan(app):
-    global engine, replay, model_error, last_received, zone_history
+    global engine, replay, model_error, last_received, zone_history, ndtp_server, external, route_network, schedule_available
     last_received=None
     zone_history=ZoneHistory()
-    schedule=pd.read_csv(DATA/os.getenv("REPLAY_SPLIT","test")/"schedule.csv")
+    schedule_path=Path(os.getenv('SCHEDULE_FILE',str(DATA/os.getenv("REPLAY_SPLIT","test")/"schedule.csv")))
+    schedule_available=schedule_path.is_file()
+    schedule=pd.read_csv(schedule_path) if schedule_available else pd.DataFrame(columns=['tr_id','tt_action_item_id','time_begin','geom','building_address'])
+    external=ExternalContext()
+    try:
+        route_network=RouteNetwork.model_validate_json(Path('artifacts/route-network.json').read_text(encoding='utf-8'))
+    except (OSError,ValueError):
+        route_network=RouteNetwork(routes=[])
+    detect_stops=os.getenv('DETECT_STOPS','0')=='1'
     log_path=Path(os.getenv("PREDICTION_LOG_PATH","artifacts/prediction_log.parquet"))
     if log_path.exists():
         archive=log_path.parent/"logs"
         archive.mkdir(parents=True,exist_ok=True)
         shutil.copy2(log_path,archive/(datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")+".parquet"))
     try:
-        engine=StreamingPredictor(schedule,log_path=log_path)
+        engine=StreamingPredictor(schedule,log_path=log_path,detect_stops=detect_stops)
         engine.flush()
         model_error=None
     except (FileNotFoundError, ValueError, RuntimeError, CatBoostError) as exc:
@@ -43,7 +62,7 @@ async def lifespan(app):
         global engine, zone_history, last_received
         with engine.lock:
             engine.flush()
-            engine=StreamingPredictor(schedule, model=engine.model, log_path=log_path)
+            engine=StreamingPredictor(schedule, model=engine.model, log_path=log_path,detect_stops=detect_stops)
             zone_history=ZoneHistory()
             last_received=None
     def dispatch(path, payload):
@@ -54,9 +73,24 @@ async def lifespan(app):
             engine.advance(at)
             zone_history.capture(engine)
     replay=ReplayController(DATA,os.getenv('REPLAY_SPLIT','test'),dispatch,reset,advance) if engine else None
-    yield
-    if replay: replay.close()
-    if engine: engine.flush()
+    ndtp_server=None
+    if engine and os.getenv('NDTP_ENABLED','0')=='1':
+        from backend.ndtp import NDTPServer
+        def ingest_ndtp(record):
+            if replay and replay.mode=='REPLAY':raise ValueError('Switch replay to LIVE before NDTP ingestion')
+            return perform(engine.ingest,record)
+        ndtp_server=NDTPServer(ingest_ndtp,host=os.getenv('NDTP_HOST','127.0.0.1'),port=int(os.getenv('NDTP_PORT','9201')),unit_map=__import__('json').loads(os.getenv('NDTP_UNIT_MAP','{}')),tz=os.getenv('NDTP_TIMEZONE','UTC'),offset_seconds=float(os.getenv('NDTP_CLOCK_OFFSET_SECONDS','0')))
+        try:ndtp_server.start()
+        except RuntimeError:pass # ML stays available; /external/status reports failure.
+    external_task=asyncio.create_task(external.run())
+    try:
+        yield
+    finally:
+        external_task.cancel()
+        with suppress(asyncio.CancelledError): await external_task
+        if ndtp_server:ndtp_server.close()
+        if replay: replay.close()
+        if engine: engine.flush()
 
 app=FastAPI(title="Предиктор · Московский транспорт",version="1.0.0",lifespan=lifespan,
             servers=[{"url":"/","description":"Direct backend :8000"},
@@ -191,10 +225,14 @@ def predictions(limit:int=Query(100,ge=1,le=1000),observed:bool=False,tr_id:str|
         if target_stop_id: rows=[r for r in rows if r['target_stop_id']==target_stop_id]
         return rows[-limit:]
 
+@app.get('/health/live')
+def liveness():return {'status':'alive'}
+
 @app.get("/health")
-def health():
+def health(response:Response):
+    if engine is None:response.status_code=503
     gap=time.monotonic()-last_received if last_received is not None else None
-    return {"status":"ok" if engine else "degraded","ml_status":"ONLINE" if engine else "UNAVAILABLE","ml_error":model_error,"mode":replay.mode if replay else 'LIVE',"active_vehicles":sum(c['vehicles'] for c in cells('current',None)) if engine else 0,"hotspots_count":sum(c['risk_score']>=20 for c in cells('forecast',None)) if engine else 0,"connection":"WAITING" if gap is None else "CONNECTION LOST" if gap>20 else "LIVE","seconds_since_last_packet":gap,"last_telemetry_timestamp":max((str(v['location_timestamp']) for v in engine.vehicles.values() if v.get('location_timestamp')),default=None) if engine else None,"model_version":engine.model.version if engine else None,"horizon_seconds":[600,900],"time_scale":"source timestamps (timezone unspecified)","routes_available":False}
+    return {"schedule_available":schedule_available,"status":"ok" if engine else "degraded","ml_status":"ONLINE" if engine else "UNAVAILABLE","ml_error":model_error,"mode":replay.mode if replay else 'LIVE',"active_vehicles":sum(c['vehicles'] for c in cells('current',None)) if engine else 0,"hotspots_count":sum(c['risk_score']>=20 for c in cells('forecast',None)) if engine else 0,"connection":"WAITING" if gap is None else "CONNECTION LOST" if gap>20 else "LIVE","seconds_since_last_packet":gap,"last_telemetry_timestamp":max((str(v['location_timestamp']) for v in engine.vehicles.values() if v.get('location_timestamp')),default=None) if engine else None,"model_version":engine.model.version if engine else None,"horizon_seconds":[600,900],"time_scale":"source timestamps (timezone unspecified)","routes_available":bool(route_network.routes)}
 
 @app.get("/metrics")
 def metrics():
@@ -203,7 +241,83 @@ def metrics():
 
 @app.get("/external/status")
 def external_status():
-    return {"google_maps":{"provider":"Google Maps JavaScript API","configuration":"frontend VITE_GOOGLE_MAPS_API_KEY","runtime_status":"reported by browser","required_for_inference":False},"weather":{"enabled":False},"ndtp":{"enabled":False,"reason":"Replay uses decoded CSV telemetry"}}
+    return {"yandex_maps":{"provider":"Yandex Maps JS API v3","configuration":"VITE_YANDEX_MAPS_API_KEY"},"context":external.snapshot(mode=replay.mode if replay else 'LIVE'),"ndtp":ndtp_server.state() if ndtp_server else {"enabled":False,"reason":"NDTP_ENABLED=1 or POST /telemetry/ndtp"},"schedule_available":schedule_available,"routes_count":len(route_network.routes)}
+
+@app.post('/telemetry/ndtp',dependencies=[Depends(authorization)])
+async def ndtp_http(request:Request):
+    """A bridge batch contains a handshake followed by complete NDTP frames."""
+    require_external_source()
+    from backend.ndtp import FrameDecoder,Session
+    data=bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data)>1048576:raise HTTPException(413,'NDTP batch exceeds 1 MiB')
+    try:
+        decoder=FrameDecoder();packets=decoder.feed(data);session=Session();records=[]
+        if decoder.buffer:raise ValueError('Incomplete final NDTP frame')
+        if not packets:raise ValueError('Empty NDTP batch')
+        mapping=__import__('json').loads(os.getenv('NDTP_UNIT_MAP','{}'))
+        received=datetime.now(timezone.utc)
+        for packet in packets:
+            if session.accept(packet):records.append(packet.record(received,unit_map=mapping,tz=os.getenv('NDTP_TIMEZONE','UTC'),offset_seconds=float(os.getenv('NDTP_CLOCK_OFFSET_SECONDS','0'))))
+        # Validate the whole batch before any model/state mutation.
+        parsed=[Telemetry.model_validate(r).model_dump(exclude_none=True) for r in records]
+    except (ValueError,KeyError,TypeError) as exc:raise HTTPException(422,str(exc)) from exc
+    return {'frames':len(records),'results':[perform(engine.ingest,r) for r in parsed]}
+
+@app.get('/external/context')
+def context_evidence(lat:float=Query(55.7558,ge=54.5,le=57),lon:float=Query(37.6173,ge=36,le=39),radius_m:int=Query(1000,ge=100,le=10000)):
+    result=external.snapshot(lat,lon,radius_m,mode=replay.mode if replay else 'LIVE')
+    # LIVE is also used by the historical CLI emulator. It is not proof of clock alignment.
+    if result['usable_with_telemetry']:
+        source_zone=os.getenv('TELEMETRY_TIMEZONE')
+        if engine is None or engine.clock is None:
+            result.update(usable_with_telemetry=False,replay_notice='Телеметрия ещё не поступила; показан отдельный текущий контекст Москвы')
+        elif not source_zone:
+            result.update(usable_with_telemetry=False,replay_notice='Часовой пояс телеметрии не подтверждён; текущий контекст не совмещается с потоком')
+        else:
+            try:
+                from zoneinfo import ZoneInfo
+                source_at=engine.clock.to_pydatetime().replace(tzinfo=ZoneInfo(source_zone))
+                gap=abs((datetime.now(timezone.utc)-source_at).total_seconds())
+                if gap>300: result.update(usable_with_telemetry=False,replay_notice='Время телеметрии отличается от текущего более чем на 5 минут; контекст отделён от потока')
+            except (ValueError,KeyError):
+                result.update(usable_with_telemetry=False,replay_notice='Некорректная настройка часового пояса телеметрии')
+    return result
+
+@app.post('/external/events/import',dependencies=[Depends(authorization)])
+def import_events(feed:EventFeed):
+    try: return external.import_feed(feed)
+    except ValueError as exc: raise HTTPException(422,str(exc)) from exc
+
+@app.post('/analysis/what-if')
+def what_if(scenario:Scenario):
+    try: return calculate(scenario)
+    except ValueError as exc: raise HTTPException(422,str(exc)) from exc
+
+@app.get('/network/routes')
+def network_routes():
+    return route_network.model_dump()
+
+@app.post('/network/routes/import',dependencies=[Depends(authorization)])
+def import_routes(network:RouteNetwork):
+    global route_network
+    with route_lock:
+        path=Path('artifacts/route-network.json')
+        path.parent.mkdir(parents=True,exist_ok=True)
+        temp=path.with_suffix('.tmp')
+        temp.write_text(network.model_dump_json(),encoding='utf-8')
+        temp.replace(path)
+        route_network=network
+    return {'accepted':len(network.routes)}
+
+@app.post('/network/map-match')
+def map_match(point:MatchRequest):
+    return match(route_network,point)
+
+@app.get('/ndtp/status')
+def ndtp_status():
+    return ndtp_server.state() if ndtp_server else {'enabled':False}
 
 class ReplayCommand(BaseModel):
     action:Literal['play','pause','seek','speed','live']
@@ -218,6 +332,14 @@ def replay_state():
 @app.post('/replay/control',dependencies=[Depends(authorization)])
 def replay_control(command:ReplayCommand):
     require_engine()
+    if command.action=='seek':
+        try:
+            target=pd.Timestamp(command.timestamp)
+            if pd.isna(target) or target.tzinfo is not None or not replay.start<=target<=replay.end:
+                raise ValueError('Seek timestamp outside replay range')
+        except (ValueError,TypeError) as exc: raise HTTPException(422,str(exc)) from exc
+    if command.action in ('play','seek') and not schedule_available:
+        raise HTTPException(409,'Датасет не установлен. Укажите DATA_DIR с test/schedule.csv и телеметрией; внешние факторы и what-if доступны без него.')
     try: return replay.control(command.action,command.speed,command.timestamp)
     except (ValueError,TypeError) as exc: raise HTTPException(422,str(exc)) from exc
 
