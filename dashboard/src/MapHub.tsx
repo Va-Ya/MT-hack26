@@ -1,5 +1,6 @@
 import {useEffect,useRef,useState} from 'react';
 import GoogleMap from './Map';
+import OpenMap from './OpenMap';
 import {loadYandexMaps} from './yandexMaps';
 import type {Entity,YandexSDK,YMapInstance} from './yandexMaps';
 import type {Cell,Vehicle} from './types';
@@ -52,7 +53,7 @@ function YandexMap(p:Props){
 }
 
 export default function MapHub(p:Props){
- const [provider,setProvider]=useState(key?'yandex':import.meta.env.VITE_GOOGLE_MAPS_API_KEY?'google':'scheme');
+ const [provider,setProvider]=useState(key?'yandex':import.meta.env.VITE_GOOGLE_MAPS_API_KEY?'google':'osm');
  useEffect(()=>{if(provider==='scheme')p.onViewport?.('36,54.5,39,57',10);},[provider]);
- return <><div className="provider-bar"><label>Карта <select aria-label="Провайдер карты" value={provider} onChange={e=>setProvider(e.target.value)}><option value="scheme">Схема без ключа</option><option value="yandex">Яндекс Карты</option><option value="google">Google Maps</option></select></label><span>{p.replayMode==='REPLAY'?'Исторический replay · текущие дорожные события скрыты':'Дорожные события — отдельный контекст'}</span></div>{provider==='yandex'?<YandexMap {...p}/>:provider==='google'?<><GoogleMap {...p}/><p className="hint">Google: существующий слой ТС. Импортированные маршруты и события доступны на схеме и в Яндекс Картах.</p></>:<Schematic {...p}/>}</>;
+ return <><div className="provider-bar"><label>Карта <select aria-label="Провайдер карты" value={provider} onChange={e=>setProvider(e.target.value)}><option value="osm">OpenStreetMap</option><option value="scheme">Схема без ключа</option><option value="yandex">Яндекс Карты</option><option value="google">Google Maps</option></select></label><span>{p.replayMode==='REPLAY'?'Исторический replay · текущие дорожные события скрыты':'Дорожные события — отдельный контекст'}</span></div>{provider==='osm'?<OpenMap {...p}/>:provider==='yandex'?<YandexMap {...p}/>:provider==='google'?<><GoogleMap {...p}/><p className="hint">Google: существующий слой ТС. Импортированные маршруты и события доступны на схеме и в Яндекс Картах.</p></>:<Schematic {...p}/>}</>;
 }

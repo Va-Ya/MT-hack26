@@ -1,6 +1,8 @@
 """Single owned replay worker. Seeking rebuilds causal state, including pending forecasts."""
 import threading
 import time
+import json
+from pathlib import Path
 import pandas as pd
 from emulator.replay import events
 
@@ -14,8 +16,21 @@ class ReplayController:
         self.mode = 'LIVE'
         self.status = 'idle'
         self.speed = 50
-        self.start = pd.Timestamp('2026-01-06 06:50:00')
-        self.end = pd.Timestamp('2026-01-06 08:00:00')
+        if pending:
+            self.start = min(e[0] for e in pending)
+            self.end = max(e[0] for e in pending)+pd.Timedelta(minutes=15)
+        else:
+            try:
+                manifest = json.loads((Path(data)/'manifest.json').read_text(encoding='utf-8'))
+                self.start, self.end = pd.Timestamp(manifest['start']), pd.Timestamp(manifest['end'])
+            except (OSError, ValueError, KeyError, TypeError):
+                try:
+                    points = pd.read_csv(Path(data)/'labels'/f'labels_{split}.csv',usecols=['T'])
+                    times = pd.to_datetime(points['T'],format='mixed').dropna()
+                    self.start, self.end = times.min(), times.max()+pd.Timedelta(minutes=15)
+                    if pd.isna(self.start): raise ValueError('Empty replay dataset')
+                except (OSError, ValueError, TypeError):
+                    self.start = self.end = pd.Timestamp.now().floor('s')
         self.cursor = self.start
         self.index = 0
         self.target = None

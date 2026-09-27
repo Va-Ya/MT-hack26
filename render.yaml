@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: mt-hack26
+    runtime: docker
+    plan: free
+    region: frankfurt
+    branch: moscow-render
+    dockerfilePath: ./Dockerfile.render
+    healthCheckPath: /api/health
+    autoDeployTrigger: "off"
+    envVars:
+      - key: INGEST_TOKEN
+        generateValue: true
+      - key: DEMO_ENABLED
+        value: "1"
+      - key: DEMO_AUTOSTART
+        value: "1"
+      - key: DATA_DIR
+        value: /app/demo/data
+      - key: WEATHER_ENABLED
+        value: "false"
+      - key: NDTP_ENABLED
+        value: "0"
+      - key: DETECT_STOPS
+        value: "0"
+

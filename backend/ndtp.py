@@ -33,6 +33,7 @@ class Packet:
     kind:str
     navigation:dict|None
     digest:str
+    frame:bytes=b''
 
     def record(self,received_at=None,unit_map=None,tz='UTC',offset_seconds=0):
         if self.navigation is None:raise ProtocolError('Handshake contains no telemetry')
@@ -61,7 +62,7 @@ def decode(frame):
         major,minor,options,address,max_size,reserved=HANDSHAKE.unpack(body)
         if (major,minor)!=(6,2) or options or address!=peer or max_size>MAX_DATA or not max_size or reserved:
             raise ProtocolError('Invalid NDTP 6.2 handshake')
-        return Packet(peer,request,'handshake',None,digest)
+        return Packet(peer,request,'handshake',None,digest,frame)
     if (service,kind)!=(1,101):raise ProtocolError('Unsupported NPH service/type')
     position=0;navigation=None
     while position<len(body):
@@ -77,7 +78,7 @@ def decode(frame):
             navigation=dict(timestamp=stamp,lat=lat/1e7*(1 if bits&32 else -1),lon=lon/1e7*(1 if bits&64 else -1),location_valid=bool(bits&128),speed=float(speed),heading=float(course))
         position+=size
     if navigation is None:raise ProtocolError('NAV00 is required')
-    return Packet(peer,request,'telemetry',navigation,digest)
+    return Packet(peer,request,'telemetry',navigation,digest,frame)
 
 class FrameDecoder:
     def __init__(self):self.buffer=bytearray()

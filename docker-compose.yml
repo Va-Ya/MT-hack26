@@ -13,7 +13,7 @@ services:
       ml:
         condition: service_completed_successfully
     environment:
-      DATA_DIR: /app/data/raw
+      DATA_DIR: ${DATA_DIR:-/app/demo/data}
       REPLAY_SPLIT: test
       WEATHER_ENABLED: ${WEATHER_ENABLED:-true}
       CODD_FEED_URL: ${CODD_FEED_URL:-}
@@ -24,10 +24,13 @@ services:
       NDTP_HOST: 0.0.0.0
       NDTP_PORT: 9201
       NDTP_TIMEZONE: ${NDTP_TIMEZONE:-UTC}
+      NDTP_CLOCK_OFFSET_SECONDS: ${NDTP_CLOCK_OFFSET_SECONDS:-0}
       NDTP_UNIT_MAP: ${NDTP_UNIT_MAP:-{}}
+      SCHEDULE_FILE: ${SCHEDULE_FILE:-}
       DETECT_STOPS: ${DETECT_STOPS:-0}
     volumes:
       - ./data/raw:/app/data/raw:ro
+      - ./demo/data:/app/demo/data:ro
       - ./artifacts:/app/artifacts
       - ./models:/app/models:ro
     ports:
@@ -41,7 +44,8 @@ services:
     restart: unless-stopped
   dashboard:
     build:
-      context: ./dashboard
+      context: .
+      dockerfile: dashboard/Dockerfile
       args:
         VITE_YANDEX_MAPS_API_KEY: ${VITE_YANDEX_MAPS_API_KEY:-}
         VITE_GOOGLE_MAPS_API_KEY: ${VITE_GOOGLE_MAPS_API_KEY:-}

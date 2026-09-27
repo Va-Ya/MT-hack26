@@ -1,0 +1,29 @@
+{
+  "source": "Original hackathon test data; not training data",
+  "source_sha256": {
+    "test/traffic.csv": "3c74bb9d3cc5e076a2e7f89de7e78fb103c350757d16c9d629de651ee09bf517",
+    "test/schedule.csv": "a31023b3ec29942145e31ef0eb93bc5ef4adf49b2d9da5b397f02e03e4665bd3",
+    "labels/labels_test.csv": "7c7b0206d7ee6ee66af6baafba311755d5e033cd291410972eb89a231079df95"
+  },
+  "history_start": "2026-01-06 01:45:00",
+  "start": "2026-01-06 02:05:00",
+  "end": "2026-01-06 23:40:00",
+  "vehicles": [
+    "122048",
+    "122613",
+    "122658",
+    "129964",
+    "130072",
+    "130238",
+    "131672",
+    "132430",
+    "133300",
+    "133957",
+    "134040",
+    "134494",
+    "135081"
+  ],
+  "telemetry_rows": 88588,
+  "contexts": 353,
+  "schedule_rows": 5558
+}

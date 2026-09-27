@@ -1,0 +1,12 @@
+{
+  "branch": "moscow-render",
+  "model_version": "e44988f343f4",
+  "model_hashes_verified": true,
+  "python_tests_passed": 70,
+  "frontend_build_passed": true,
+  "docker_engine_restored": "28.5.1",
+  "docker_build": "Stopped before completion to prioritize Render deploy; frontend and dependency installation completed",
+  "official_ndtp": "API startup timeout on local machine; not confirmed",
+  "github_push": false,
+  "render_deployed": false
+}

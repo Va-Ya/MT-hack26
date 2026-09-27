@@ -2,6 +2,8 @@
 __pycache__/
 .pytest_cache/
 data/
+!demo/data/
+!demo/data/**
 dashboard/node_modules/
 dashboard/dist/
 artifacts/*.parquet

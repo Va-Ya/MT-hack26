@@ -1,0 +1,17 @@
+.git
+.venv
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+dashboard/dist
+data
+artifacts
+*.zip
+*.tar
+tests
+!demo/data/
+!demo/data/**
+.env
+.env.*
+**/.env
+**/.env.*

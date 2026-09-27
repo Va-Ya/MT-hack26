@@ -1,0 +1,58 @@
+{
+  "platform": "Windows-11-10.0.26200-SP0",
+  "processor": "Intel64 Family 6 Model 122 Stepping 8, GenuineIntel",
+  "model_version": "e44988f343f4",
+  "vehicles": 4,
+  "events": 2771,
+  "elapsed_s": 138.63360329996794,
+  "events_per_s": 19.987938955927294,
+  "full_event_processing": {
+    "n": 2771,
+    "p50_ms": 47.463900060392916,
+    "p95_ms": 102.16240002773702,
+    "max_ms": 384.38860001042485
+  },
+  "forecast_features": {
+    "n": 2069,
+    "p50_ms": 34.74040003493428,
+    "p95_ms": 72.21248005516824,
+    "max_ms": 247.7041999809444
+  },
+  "forecast_inference": {
+    "n": 2069,
+    "p50_ms": 9.740699897520244,
+    "p95_ms": 22.503380011767145,
+    "max_ms": 152.12260000407696
+  },
+  "forecast_total": {
+    "n": 2069,
+    "p50_ms": 44.523100019432604,
+    "p95_ms": 89.57399993669237,
+    "max_ms": 345.17119999509305
+  },
+  "metrics": {
+    "samples": 2069,
+    "logged_predictions": 2069,
+    "model_version": "e44988f343f4",
+    "feature_ms": {
+      "mean": 38.93728279263328,
+      "p50": 34.74040003493428,
+      "p95": 72.21248005516824
+    },
+    "inference_ms": {
+      "mean": 11.218743209336393,
+      "p50": 9.740699897520244,
+      "p95": 22.503380011767145
+    },
+    "total_ms": {
+      "mean": 50.15602600196968,
+      "p50": 44.523100019432604,
+      "p95": 89.57399993669237
+    },
+    "observed_outcomes": 1762,
+    "replay_mae": 59.948716561307954
+  },
+  "limitations": "Single-process local CPU, no HTTP/network; includes periodic log persistence, not Docker/Render or official emulator throughput",
+  "peak_working_set_mb": 131.79296875,
+  "working_set_mb": 130.99609375
+}

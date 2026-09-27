@@ -1,0 +1,12 @@
+{
+  "targetHost": "host.docker.internal",
+  "targetPort": 9201,
+  "units": [
+    {
+      "unitId": 893159,
+      "intervalMs": 5000,
+      "autoGenerate": true,
+      "cells": []
+    }
+  ]
+}

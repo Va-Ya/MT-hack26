@@ -1,0 +1,25 @@
+FROM node:24-alpine AS frontend
+WORKDIR /frontend
+COPY dashboard/package*.json ./
+RUN npm ci
+COPY dashboard/ ./
+ARG VITE_YANDEX_MAPS_API_KEY
+ARG VITE_GOOGLE_MAPS_API_KEY
+ENV VITE_BACKEND_DOCS_URL=/api/docs
+RUN npm run build
+
+FROM python:3.12-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+WORKDIR /app
+COPY requirements-lock.txt ./
+RUN pip install -r requirements-lock.txt
+COPY ml ./ml
+COPY backend ./backend
+COPY emulator ./emulator
+COPY models ./models
+COPY demo/data ./demo/data
+COPY docs/site ./docs/site
+COPY --from=frontend /frontend/dist ./dashboard/dist
+ENV DATA_DIR=/app/demo/data REPLAY_SPLIT=test DEMO_ENABLED=1 DEMO_AUTOSTART=1 WEATHER_ENABLED=false FRONTEND_DIR=/app/dashboard/dist
+CMD ["sh","-c","python -m ml.prepare && exec uvicorn backend.web:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
+

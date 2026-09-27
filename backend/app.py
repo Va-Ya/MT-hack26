@@ -37,7 +37,7 @@ async def lifespan(app):
     global engine, replay, model_error, last_received, zone_history, ndtp_server, external, route_network, schedule_available
     last_received=None
     zone_history=ZoneHistory()
-    schedule_path=Path(os.getenv('SCHEDULE_FILE',str(DATA/os.getenv("REPLAY_SPLIT","test")/"schedule.csv")))
+    schedule_path=Path(os.getenv('SCHEDULE_FILE') or str(DATA/os.getenv("REPLAY_SPLIT","test")/"schedule.csv"))
     schedule_available=schedule_path.is_file()
     schedule=pd.read_csv(schedule_path) if schedule_available else pd.DataFrame(columns=['tr_id','tt_action_item_id','time_begin','geom','building_address'])
     external=ExternalContext()
@@ -73,6 +73,8 @@ async def lifespan(app):
             engine.advance(at)
             zone_history.capture(engine)
     replay=ReplayController(DATA,os.getenv('REPLAY_SPLIT','test'),dispatch,reset,advance) if engine else None
+    if replay and schedule_available and os.getenv('DEMO_AUTOSTART','0')=='1':
+        replay.control('play')
     ndtp_server=None
     if engine and os.getenv('NDTP_ENABLED','0')=='1':
         from backend.ndtp import NDTPServer
@@ -232,7 +234,7 @@ def liveness():return {'status':'alive'}
 def health(response:Response):
     if engine is None:response.status_code=503
     gap=time.monotonic()-last_received if last_received is not None else None
-    return {"schedule_available":schedule_available,"status":"ok" if engine else "degraded","ml_status":"ONLINE" if engine else "UNAVAILABLE","ml_error":model_error,"mode":replay.mode if replay else 'LIVE',"active_vehicles":sum(c['vehicles'] for c in cells('current',None)) if engine else 0,"hotspots_count":sum(c['risk_score']>=20 for c in cells('forecast',None)) if engine else 0,"connection":"WAITING" if gap is None else "CONNECTION LOST" if gap>20 else "LIVE","seconds_since_last_packet":gap,"last_telemetry_timestamp":max((str(v['location_timestamp']) for v in engine.vehicles.values() if v.get('location_timestamp')),default=None) if engine else None,"model_version":engine.model.version if engine else None,"horizon_seconds":[600,900],"time_scale":"source timestamps (timezone unspecified)","routes_available":bool(route_network.routes)}
+    return {"demo_enabled":os.getenv("DEMO_ENABLED","0")=="1","schedule_available":schedule_available,"status":"ok" if engine else "degraded","ml_status":"ONLINE" if engine else "UNAVAILABLE","ml_error":model_error,"mode":replay.mode if replay else 'LIVE',"active_vehicles":sum(c['vehicles'] for c in cells('current',None)) if engine else 0,"hotspots_count":sum(c['risk_score']>=20 for c in cells('forecast',None)) if engine else 0,"connection":"WAITING" if gap is None else "CONNECTION LOST" if gap>20 else "LIVE","seconds_since_last_packet":gap,"last_telemetry_timestamp":max((str(v['location_timestamp']) for v in engine.vehicles.values() if v.get('location_timestamp')),default=None) if engine else None,"model_version":engine.model.version if engine else None,"horizon_seconds":[600,900],"time_scale":"source timestamps (timezone unspecified)","routes_available":bool(route_network.routes)}
 
 @app.get("/metrics")
 def metrics():
@@ -361,3 +363,19 @@ def search(q:str=Query(...,min_length=1,max_length=100)):
                 result.append(dict(type='stop_event',id=str(row.tt_action_item_id),tr_id=tr,label=str(row.building_address),lon=float(coords[0]) if len(coords)==2 else None,lat=float(coords[1]) if len(coords)==2 else None))
             if len(result)>=30: break
         return result[:30]
+
+# Public controls are restricted to the installed historical dataset.
+from collections import deque
+_demo_commands=deque(maxlen=120)
+_demo_lock=RLock()
+
+@app.post('/demo/control')
+def demo_control(command:ReplayCommand):
+    if os.getenv('DEMO_ENABLED','0')!='1':raise HTTPException(404,'Public demo disabled')
+    if command.action=='live':raise HTTPException(403,'LIVE requires operator access')
+    with _demo_lock:
+        now=time.monotonic()
+        while _demo_commands and now-_demo_commands[0]>=60:_demo_commands.popleft()
+        if len(_demo_commands)>=60:raise HTTPException(429,'Too many demo controls; retry in a minute')
+        _demo_commands.append(now)
+        return replay_control(command)
