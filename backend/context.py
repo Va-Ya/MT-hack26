@@ -83,12 +83,17 @@ class ExternalContext:
         self.weather_enabled = os.getenv("WEATHER_ENABLED", "true").lower() == "true"
         self.codd_url = os.getenv("CODD_FEED_URL", "").strip()
         self.last_attempt = None
+        self.weather_cache = {}
+        self.weather_requests = {}
+        self.weather_attempts = {}
+        self.weather_errors = {}
         self.load()
 
     def load(self):
         try:
             data = json.loads(self.cache_path.read_text(encoding="utf-8"))
             self.weather = data.get("weather")
+            self.weather_cache = data.get("weather_cache", {})
             if data.get("feed"):
                 self.feed = EventFeed.model_validate(data["feed"])
                 self.feed_meta = data["feed_meta"]
@@ -99,7 +104,7 @@ class ExternalContext:
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         temp = self.cache_path.with_suffix(".tmp")
         temp.write_text(json.dumps({"weather": self.weather, "feed": self.feed.model_dump(mode="json") if self.feed else None,
-                                    "feed_meta": self.feed_meta}, ensure_ascii=False), encoding="utf-8")
+                                    "feed_meta": self.feed_meta, "weather_cache": self.weather_cache}, ensure_ascii=False), encoding="utf-8")
         temp.replace(self.cache_path)
 
     def import_feed(self, feed, transport="manual_import", now=None):
@@ -166,13 +171,83 @@ class ExternalContext:
             with self.lock:
                 self.codd_error = "Источник не ответил или не соответствует контракту EventFeed 1.0"
 
+    def request_weather(self, lat, lon, mode, source_at=None):
+        """Queue bounded location/day requests; never perform HTTP during prediction or GET."""
+        lat, lon = round(lat, 2), round(lon, 2)
+        if mode == 'REPLAY' and source_at is None:
+            return None
+        day = source_at.astimezone(timezone.utc).date().isoformat() if mode == 'REPLAY' else 'current'
+        key = f'{lat:.2f},{lon:.2f}/{day}'
+        with self.lock:
+            if self.weather_enabled:
+                cached = self.weather_cache.get(key)
+                age = (utcnow()-datetime.fromisoformat(cached['fetched_at'])).total_seconds() if cached else float('inf')
+                attempted = self.weather_attempts.get(key)
+                retry = attempted is None or (utcnow()-attempted).total_seconds() >= 300
+                if retry and (not cached or day == 'current' and age >= 300):
+                    if len(self.weather_requests) < 32:
+                        self.weather_requests[key] = (lat, lon, day)
+        return key
+
+    async def refresh_requested_weather(self):
+        with self.lock:
+            requests = list(self.weather_requests.items())[:2]
+            for key, _ in requests:
+                self.weather_requests.pop(key, None)
+                self.weather_attempts[key] = utcnow()
+        for key, (lat, lon, day) in requests:
+            try:
+                params = dict(latitude=lat, longitude=lon, timezone='UTC', wind_speed_unit='ms')
+                fields = 'temperature_2m,precipitation,rain,snowfall,weather_code,wind_speed_10m'
+                archive = day != 'current'
+                params.update(dict(start_date=day, end_date=day, hourly=fields) if archive else dict(current=fields))
+                url = 'https://archive-api.open-meteo.com/v1/archive' if archive else 'https://api.open-meteo.com/v1/forecast'
+                async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+                    response = await client.get(url, params=params)
+                    response.raise_for_status()
+                    data = response.json()
+                series = data['hourly'] if archive else data['current']
+                times = series['time'] if archive else [series['time']]
+                rows = []
+                for i, at in enumerate(times):
+                    values = {f: series[f][i] if archive else series[f] for f in fields.split(',')}
+                    if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in values.values()):
+                        continue
+                    observed = datetime.fromisoformat(at).replace(tzinfo=timezone.utc)
+                    if not archive and observed > utcnow():
+                        raise ValueError('Future weather timestamp')
+                    values['time'] = at
+                    rows.append(dict(values=values, observed_at=observed.isoformat()))
+                if not rows:
+                    raise ValueError('No valid weather observations')
+                entry = dict(rows=rows, units=data['hourly_units' if archive else 'current_units'],
+                             fetched_at=utcnow().isoformat(), latitude=data['latitude'], longitude=data['longitude'],
+                             source='Open-Meteo', source_url='https://open-meteo.com/en/docs/historical-weather-api' if archive else 'https://open-meteo.com/en/docs',
+                             kind='retrospective_reanalysis' if archive else 'weather_model',
+                             scope='Модельная погодная ячейка около выбранной точки; не измерения для каждой улицы')
+                with self.lock:
+                    self.weather_cache[key] = entry
+                    self.weather_errors.pop(key, None)
+                    while len(self.weather_cache) > 64:
+                        self.weather_cache.pop(next(iter(self.weather_cache)))
+                    self.save()
+            except (httpx.HTTPError, ValueError, KeyError, TypeError, IndexError, OSError):
+                with self.lock:
+                    self.weather_errors[key] = 'Не удалось обновить погоду; последнее значение этой ячейки сохранено'
+            with self.lock:
+                for mapping in (self.weather_attempts, self.weather_errors):
+                    while len(mapping) > 128:
+                        mapping.pop(next(iter(mapping)))
+
     async def run(self):
         while True:
-            self.last_attempt = utcnow().isoformat()
-            await asyncio.gather(self.refresh_weather(), self.refresh_codd())
-            await asyncio.sleep(300)
+            if not self.last_attempt or (utcnow()-datetime.fromisoformat(self.last_attempt)).total_seconds() >= 300:
+                self.last_attempt = utcnow().isoformat()
+                await asyncio.gather(self.refresh_weather(), self.refresh_codd())
+            await self.refresh_requested_weather()
+            await asyncio.sleep(2)
 
-    def snapshot(self, lat=55.7558, lon=37.6173, radius_m=1000, mode="LIVE", now=None):
+    def snapshot(self, lat=55.7558, lon=37.6173, radius_m=1000, mode="LIVE", now=None, source_at=None):
         now = now or utcnow()
         with self.lock:
             weather = copy.deepcopy(self.weather)
@@ -181,6 +256,21 @@ class ExternalContext:
         wa = (now - datetime.fromisoformat(weather["observed_at"])).total_seconds() if weather else None
         fa = (now - feed.generated_at).total_seconds() if feed else None
         weather_status = "disabled" if not self.weather_enabled else "unavailable" if not weather else "stale" if wa < 0 or wa > 3600 or weather_error else "ok"
+        key = self.request_weather(lat, lon, mode, source_at)
+        with self.lock:
+            cached = copy.deepcopy(self.weather_cache.get(key))
+            selected_error = self.weather_errors.get(key)
+        if cached:
+            at = source_at.astimezone(timezone.utc) if mode == 'REPLAY' else now
+            candidates = [r for r in cached['rows'] if datetime.fromisoformat(r['observed_at']) <= at]
+            selected = max(candidates, key=lambda r: r['observed_at']) if candidates else None
+            wa = (at-datetime.fromisoformat(selected['observed_at'])).total_seconds() if selected else None
+            weather = {**{k:v for k,v in cached.items() if k != 'rows'}, **selected} if selected else None
+            weather_error = selected_error
+            weather_status = 'disabled' if not self.weather_enabled else 'unavailable' if not weather else 'stale' if wa >= 3600 or wa < 0 or selected_error else 'ok'
+        elif mode == 'REPLAY' or distance_m(lat, lon, 55.7558, 37.6173) > 2000:
+            weather, wa, weather_error = None, None, selected_error
+            weather_status = 'disabled' if not self.weather_enabled else 'unavailable'
         feed_status = "unavailable" if not feed else "stale" if fa < 0 or fa > 900 or codd_error else "ok"
         if not feed and not self.codd_url:
             feed_status = "not_configured"
@@ -193,7 +283,9 @@ class ExternalContext:
                         events.append({**event.model_dump(mode="json"), "distance_m": round(distance, 1)})
         eligible = mode == "LIVE"
         return {"as_of": now.isoformat(), "mode": mode, "location": {"lat": lat, "lon": lon, "radius_m": radius_m},
-                "weather": {"status": weather_status, "data": weather, "age_seconds": wa, "error": weather_error},
+                "weather": {"status": weather_status, "data": weather, "age_seconds": wa, "error": weather_error,
+                            "mode": 'archive' if mode == 'REPLAY' else 'current', "reference_time": source_at.isoformat() if source_at else now.isoformat(),
+                            "retrospective": mode == 'REPLAY', "timezone": 'UTC'},
                 "road_events": {"status": feed_status, "events": sorted(events, key=lambda e: e["distance_m"]),
                                 "source_name": feed.source_name if feed else None, "generated_at": feed.generated_at.isoformat() if feed else None,
                                 "metadata": meta, "age_seconds": fa, "error": codd_error,
@@ -202,7 +294,7 @@ class ExternalContext:
                 "usable_with_telemetry": eligible,
                 "ml_features_applied": False,
                 "explanation": "Внешний контекст не изменяет ML-прогноз. Близость события не доказывает причинность.",
-                "replay_notice": None if eligible else "Текущие погода и события показаны отдельно и исключены из исторического replay",
+                "replay_notice": None if eligible else "Архивная погода — ретроспективный контекст времени телеметрии, не признак ML и не сведения, доказанно доступные на отсечке. Текущие дорожные события отделены от replay.",
                 "formulas": {"distance": "d = 2·6371000·asin(√(sin²(Δφ/2) + cos φ₁·cos φ₂·sin²(Δλ/2)))",
                              "event_filter": "published_at ≤ now; starts_at ≤ now < ends_at; d ≤ radius_m",
                              "freshness": "age = now − source_time; weather ≤ 3600 s; events ≤ 900 s"}}

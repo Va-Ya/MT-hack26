@@ -155,4 +155,8 @@ class StreamingPredictor:
         matched=[r for r in self.log if r["actual"] is not None]
         out["observed_outcomes"]=len(matched)
         out["replay_mae"]=float(np.mean([r["absolute_error"] for r in matched])) if matched else None
+        leads = [r['lead_time_seconds'] for r in matched if r.get('lead_time_seconds') is not None]
+        out['actual_lead_time'] = dict(matched_predictions=len(leads), within_10_15_minutes=sum(600 <= v <= 900 for v in leads),
+                                     after_event=sum(v <= 0 for v in leads), p50_seconds=float(np.median(leads)) if leads else None,
+                                     note='Actual event time minus prediction time; repeated predictions count separately. Distinct from scheduled horizon and leaderboard score.')
         return out

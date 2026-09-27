@@ -39,6 +39,16 @@ def test_issued_prediction_is_immutable_and_fact_delayed(tmp_path):
     e.flush()
     assert pd.read_parquet(tmp_path/"log.parquet").iloc[-1].actual==60
 
+
+def test_actual_lead_metric_distinguishes_horizon_and_after_event(tmp_path):
+    e=engine(tmp_path)
+    e.log.extend(dict(actual=10,absolute_error=1,lead_time_seconds=lead) for lead in [-1,0,599,600,720,900,901])
+    result=e.metrics()['actual_lead_time']
+    assert result['matched_predictions']==7
+    assert result['within_10_15_minutes']==3
+    assert result['after_event']==2
+    assert result['p50_seconds']==600
+
 def test_history_bounded_and_duplicates_idempotent(tmp_path):
     e=engine(tmp_path); row=telemetry().iloc[-1].to_dict()
     e.ingest(row)

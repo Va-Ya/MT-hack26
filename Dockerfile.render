@@ -20,6 +20,6 @@ COPY models ./models
 COPY demo/data ./demo/data
 COPY docs/site ./docs/site
 COPY --from=frontend /frontend/dist ./dashboard/dist
-ENV DATA_DIR=/app/demo/data REPLAY_SPLIT=test DEMO_ENABLED=1 DEMO_AUTOSTART=1 WEATHER_ENABLED=false FRONTEND_DIR=/app/dashboard/dist
+ENV DATA_DIR=/app/demo/data REPLAY_SPLIT=test DEMO_ENABLED=1 DEMO_AUTOSTART=1 WEATHER_ENABLED=true TELEMETRY_TIMEZONE=UTC FRONTEND_DIR=/app/dashboard/dist
 CMD ["sh","-c","python -m ml.prepare && exec uvicorn backend.web:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
 

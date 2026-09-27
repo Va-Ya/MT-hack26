@@ -18,7 +18,9 @@ services:
       - key: DATA_DIR
         value: /app/demo/data
       - key: WEATHER_ENABLED
-        value: "false"
+        value: "true"
+      - key: TELEMETRY_TIMEZONE
+        value: UTC
       - key: NDTP_ENABLED
         value: "0"
       - key: DETECT_STOPS

@@ -269,7 +269,15 @@ async def ndtp_http(request:Request):
 
 @app.get('/external/context')
 def context_evidence(lat:float=Query(55.7558,ge=54.5,le=57),lon:float=Query(37.6173,ge=36,le=39),radius_m:int=Query(1000,ge=100,le=10000)):
-    result=external.snapshot(lat,lon,radius_m,mode=replay.mode if replay else 'LIVE')
+    mode = replay.mode if replay else 'LIVE'
+    source_at = None
+    if mode == 'REPLAY' and replay:
+        from zoneinfo import ZoneInfo
+        try:
+            source_at = datetime.fromisoformat(replay.state()['timestamp']).replace(tzinfo=ZoneInfo(os.getenv('TELEMETRY_TIMEZONE', 'UTC')))
+        except (ValueError, KeyError):
+            pass
+    result=external.snapshot(lat,lon,radius_m,mode=mode,source_at=source_at)
     # LIVE is also used by the historical CLI emulator. It is not proof of clock alignment.
     if result['usable_with_telemetry']:
         source_zone=os.getenv('TELEMETRY_TIMEZONE')

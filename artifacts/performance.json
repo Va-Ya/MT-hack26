@@ -2,57 +2,66 @@
   "platform": "Windows-11-10.0.26200-SP0",
   "processor": "Intel64 Family 6 Model 122 Stepping 8, GenuineIntel",
   "model_version": "e44988f343f4",
-  "vehicles": 4,
-  "events": 2771,
-  "elapsed_s": 138.63360329996794,
-  "events_per_s": 19.987938955927294,
+  "vehicles": 13,
+  "events": 5000,
+  "elapsed_s": 391.256372999982,
+  "events_per_s": 12.779344555239309,
   "full_event_processing": {
-    "n": 2771,
-    "p50_ms": 47.463900060392916,
-    "p95_ms": 102.16240002773702,
-    "max_ms": 384.38860001042485
+    "n": 5000,
+    "p50_ms": 49.033200019039214,
+    "p95_ms": 235.2892700233497,
+    "max_ms": 1107.6364999171346
   },
   "forecast_features": {
-    "n": 2069,
-    "p50_ms": 34.74040003493428,
-    "p95_ms": 72.21248005516824,
-    "max_ms": 247.7041999809444
+    "n": 2437,
+    "p50_ms": 56.10369995702058,
+    "p95_ms": 208.4847999503834,
+    "max_ms": 871.4366999920458
   },
   "forecast_inference": {
-    "n": 2069,
-    "p50_ms": 9.740699897520244,
-    "p95_ms": 22.503380011767145,
-    "max_ms": 152.12260000407696
+    "n": 2437,
+    "p50_ms": 15.183900017291307,
+    "p95_ms": 55.850639985874295,
+    "max_ms": 373.64809995051473
   },
   "forecast_total": {
-    "n": 2069,
-    "p50_ms": 44.523100019432604,
-    "p95_ms": 89.57399993669237,
-    "max_ms": 345.17119999509305
+    "n": 2437,
+    "p50_ms": 73.33490008022636,
+    "p95_ms": 268.5687599936499,
+    "max_ms": 951.0601999936625
   },
   "metrics": {
-    "samples": 2069,
-    "logged_predictions": 2069,
+    "samples": 2437,
+    "logged_predictions": 2437,
     "model_version": "e44988f343f4",
     "feature_ms": {
-      "mean": 38.93728279263328,
-      "p50": 34.74040003493428,
-      "p95": 72.21248005516824
+      "mean": 79.45610229727522,
+      "p50": 56.10369995702058,
+      "p95": 208.4847999503834
     },
     "inference_ms": {
-      "mean": 11.218743209336393,
-      "p50": 9.740699897520244,
-      "p95": 22.503380011767145
+      "mean": 21.690286745828992,
+      "p50": 15.183900017291307,
+      "p95": 55.850639985874295
     },
     "total_ms": {
-      "mean": 50.15602600196968,
-      "p50": 44.523100019432604,
-      "p95": 89.57399993669237
+      "mean": 101.14638904310422,
+      "p50": 73.33490008022636,
+      "p95": 268.5687599936499
     },
-    "observed_outcomes": 1762,
-    "replay_mae": 59.948716561307954
+    "observed_outcomes": 2030,
+    "replay_mae": 45.21018475059857,
+    "actual_lead_time": {
+      "matched_predictions": 2030,
+      "within_10_15_minutes": 1561,
+      "after_event": 0,
+      "p50_seconds": 661.0583775,
+      "note": "Actual event time minus prediction time; repeated predictions count separately. Distinct from scheduled horizon and leaderboard score."
+    },
+    "cold_start_seconds": 0.5656832000240684,
+    "event_limit": 5000
   },
   "limitations": "Single-process local CPU, no HTTP/network; includes periodic log persistence, not Docker/Render or official emulator throughput",
-  "peak_working_set_mb": 131.79296875,
-  "working_set_mb": 130.99609375
+  "peak_working_set_mb": 280.75390625,
+  "working_set_mb": 139.32421875
 }

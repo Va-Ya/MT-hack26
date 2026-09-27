@@ -1,0 +1,19 @@
+{
+  "image": "ndtp-telemetry-emulator:1.0",
+  "passed": true,
+  "received": 3,
+  "status": {
+    "enabled": true,
+    "listening": true,
+    "active_connections": 0,
+    "error": null,
+    "connections": 1,
+    "handshakes": 1,
+    "frames": 3,
+    "accepted": 3,
+    "rejected": 0,
+    "last_packet_unix": 1790534712.6089616
+  },
+  "unit_mapping_verified": true,
+  "limitation": "Protocol interoperability only: auto-generated trajectory and current UNIX timestamp do not match January schedule; not a model quality test"
+}

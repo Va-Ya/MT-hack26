@@ -101,6 +101,58 @@ def test_weather_contract_and_source_time(tmp_path, monkeypatch):
     assert ctx.snapshot(now=NOW)['weather']['data']['observed_at'] == NOW.isoformat()
 
 
+def test_archive_weather_uses_source_clock_and_selected_cell(tmp_path, monkeypatch):
+    import backend.context as module
+    monkeypatch.setenv('WEATHER_ENABLED', 'true')
+    monkeypatch.setattr(module, 'utcnow', lambda: NOW)
+    ctx = ExternalContext(tmp_path/'archive.json')
+    at = datetime(2026, 1, 6, 14, 35, tzinfo=timezone.utc)
+    fields = ['temperature_2m','precipitation','rain','snowfall','weather_code','wind_speed_10m']
+    payload = dict(latitude=55.8, longitude=37.7, hourly_units={'temperature_2m':'°C'},
+                   hourly={'time':['2026-01-06T14:00','2026-01-06T15:00'], **{f:[1,99] for f in fields}})
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def get(self, url, params):
+            assert 'archive-api' in url
+            assert params['start_date'] == '2026-01-06'
+            assert params['latitude'] == 55.8 and params['longitude'] == 37.7
+            return httpx.Response(200,json=payload,request=httpx.Request('GET',url))
+    monkeypatch.setattr(httpx, 'AsyncClient', Client)
+    assert ctx.snapshot(55.8,37.7,mode='REPLAY',source_at=at,now=NOW)['weather']['data'] is None
+    asyncio.run(ctx.refresh_requested_weather())
+    result = ctx.snapshot(55.8,37.7,mode='REPLAY',source_at=at,now=NOW)
+    assert result['weather']['status'] == 'ok'
+    assert result['weather']['data']['values']['temperature_2m'] == 1
+    assert result['weather']['data']['kind'] == 'retrospective_reanalysis'
+    assert result['weather']['age_seconds'] == 2100
+    assert result['ml_features_applied'] is False
+    # Neither another cell nor another date can inherit this observation.
+    assert ctx.snapshot(56,38,mode='REPLAY',source_at=at,now=NOW)['weather']['data'] is None
+    assert ctx.snapshot(55.8,37.7,mode='REPLAY',source_at=at+timedelta(days=1),now=NOW)['weather']['data'] is None
+    restored = ExternalContext(tmp_path/'archive.json')
+    assert restored.snapshot(55.8,37.7,mode='REPLAY',source_at=at,now=NOW)['weather']['status'] == 'ok'
+    restored.weather_enabled = False
+    assert restored.snapshot(55.8,37.7,mode='REPLAY',source_at=at,now=NOW)['weather']['status'] == 'disabled'
+
+
+def test_location_weather_failure_keeps_only_same_cell(tmp_path, monkeypatch):
+    import backend.context as module
+    monkeypatch.setenv('WEATHER_ENABLED', 'true')
+    monkeypatch.setattr(module, 'utcnow', lambda: NOW)
+    ctx = ExternalContext(tmp_path/'failure.json')
+    key = ctx.request_weather(56,38,'LIVE')
+    ctx.weather_cache[key] = dict(rows=[dict(observed_at=NOW.isoformat(),values={'temperature_2m':10})],fetched_at=(NOW-timedelta(minutes=10)).isoformat())
+    async def failure(*args, **kwargs): raise httpx.ConnectError('private detail')
+    monkeypatch.setattr(httpx.AsyncClient, '__aenter__', failure)
+    asyncio.run(ctx.refresh_requested_weather())
+    result = ctx.snapshot(56,38,now=NOW)
+    assert result['weather']['status'] == 'stale'
+    assert result['weather']['data']['values']['temperature_2m'] == 10
+    assert 'private' not in result['weather']['error']
+
+
 @pytest.mark.parametrize('change', [
     {'lat': float('nan')}, {'lat': 0}, {'ends_at': NOW-timedelta(hours=2)},
     {'published_at': NOW+timedelta(minutes=1)}, {'starts_at': NOW.replace(tzinfo=None)},
