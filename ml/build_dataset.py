@@ -23,7 +23,8 @@ def load_contexts(data, split):
 def build(data, split):
     pts = load_contexts(data, split)
     telemetry = pd.read_csv(data / split / "traffic.csv", low_memory=False)
-    builder = FeatureBuilder(telemetry)
+    schedule = pd.read_csv(data / split / ('schedule_plan.csv' if split == 'validate' else 'schedule.csv'), usecols=['tr_id','tt_action_item_id','time_begin','geom'])
+    builder = FeatureBuilder(telemetry, schedule)
     records = []
     for ctx in pts.to_dict("records"):
         features = builder.build(ctx)

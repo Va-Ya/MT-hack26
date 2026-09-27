@@ -15,6 +15,15 @@ def engine(tmp_path):
     schedule=pd.DataFrame([dict(tr_id=1,tt_action_item_id=20,time_begin=CTX["target_time_begin"],geom=CTX["geom"],building_address="test")])
     return StreamingPredictor(schedule,ConstantModel(),tmp_path/"log.parquet")
 
+def test_full_log_flushes_every_200_new_predictions(tmp_path,monkeypatch):
+    e=engine(tmp_path)
+    e.log.extend([{} for _ in range(20000)])
+    writes=[]
+    monkeypatch.setattr(e,'flush',lambda:writes.append(len(e.log)))
+    for _ in range(201):e.predict_at(CTX)
+    assert writes==[20000]
+    assert e.pending_log_writes==1
+
 def test_issued_prediction_is_immutable_and_fact_delayed(tmp_path):
     e=engine(tmp_path)
     for row in telemetry().sort_values("event_time").to_dict("records"): e.ingest(row)
@@ -45,8 +54,9 @@ def test_online_offline_parity(tmp_path):
     traffic=pd.read_csv(data/"test/traffic.csv",low_memory=False)
     traffic=traffic[traffic.tr_id==ctx["tr_id"]]
     model=Predictor()
-    expected=model.predict(FeatureBuilder(traffic).build(ctx))
-    e=StreamingPredictor(pd.read_csv(data/"test/schedule.csv"),model,tmp_path/"log.parquet")
+    schedule=pd.read_csv(data/"test/schedule.csv")
+    expected=model.predict(FeatureBuilder(traffic,schedule).build(ctx))
+    e=StreamingPredictor(schedule,model,tmp_path/"log.parquet")
     times=pd.to_datetime(traffic.event_time,format="mixed")
     history=traffic[(times<=ctx["T"])&(times>=ctx["T"]-pd.Timedelta(minutes=20))].copy()
     history=history.astype(object).where(pd.notna(history),None)

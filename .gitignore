@@ -19,3 +19,8 @@ catboost_info/
 dashboard/.env*
 !dashboard/.env.example
 dashboard/*.tsbuildinfo
+
+.local-runtime.json
+artifacts/context-cache.json
+artifacts/route-network.json
+artifacts/docs/

@@ -15,13 +15,24 @@ services:
     environment:
       DATA_DIR: /app/data/raw
       REPLAY_SPLIT: test
+      WEATHER_ENABLED: ${WEATHER_ENABLED:-true}
+      CODD_FEED_URL: ${CODD_FEED_URL:-}
+      CODD_API_TOKEN: ${CODD_API_TOKEN:-}
+      TELEMETRY_TIMEZONE: ${TELEMETRY_TIMEZONE:-}
       INGEST_TOKEN: ${INGEST_TOKEN:-}
+      NDTP_ENABLED: ${NDTP_ENABLED:-0}
+      NDTP_HOST: 0.0.0.0
+      NDTP_PORT: 9201
+      NDTP_TIMEZONE: ${NDTP_TIMEZONE:-UTC}
+      NDTP_UNIT_MAP: ${NDTP_UNIT_MAP:-{}}
+      DETECT_STOPS: ${DETECT_STOPS:-0}
     volumes:
       - ./data/raw:/app/data/raw:ro
       - ./artifacts:/app/artifacts
       - ./models:/app/models:ro
     ports:
       - "127.0.0.1:8000:8000"
+      - "127.0.0.1:9201:9201"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 5s
@@ -32,6 +43,7 @@ services:
     build:
       context: ./dashboard
       args:
+        VITE_YANDEX_MAPS_API_KEY: ${VITE_YANDEX_MAPS_API_KEY:-}
         VITE_GOOGLE_MAPS_API_KEY: ${VITE_GOOGLE_MAPS_API_KEY:-}
     depends_on:
       backend:
@@ -45,6 +57,10 @@ services:
       backend:
         condition: service_healthy
     environment:
+      WEATHER_ENABLED: ${WEATHER_ENABLED:-true}
+      CODD_FEED_URL: ${CODD_FEED_URL:-}
+      CODD_API_TOKEN: ${CODD_API_TOKEN:-}
+      TELEMETRY_TIMEZONE: ${TELEMETRY_TIMEZONE:-}
       INGEST_TOKEN: ${INGEST_TOKEN:-}
     command: ["python", "-m", "emulator.managed"]
     volumes:
