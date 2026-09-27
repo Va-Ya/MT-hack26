@@ -14,20 +14,25 @@ docker compose up --build -d
 метрики http://localhost:8000/metrics. Compose автоматически запускает replay.
 Для полного датасета подключите data/raw и задайте DATA_DIR=/app/data/raw.
 
-## Render / единый образ
+## Хостинг / единый образ
+
+Для размещения без карты подготовлен [Railway](docs/RAILWAY.md):
+пробный период до 30 дней или расходования $5. Конфигурация — railway.json.
+Render также поддерживается, но проверенный аккаунт запросил привязку карты.
 
 ```powershell
 docker build -f Dockerfile.render -t mt-hack26 .
 docker run --rm -p 8000:8000 -e INGEST_TOKEN=YOUR_PRIVATE_TOKEN mt-hack26
 ```
 
-Сайт http://localhost:8000, запуск потока кнопкой ▶, API /api/docs,
+Сайт http://localhost:8000, поток запускается автоматически; пауза и перемотка под картой. API /api/docs,
 документация /documentation/. Модель работает на CPU в одном процессе.
 
 ## Материалы для жюри
 
 - [Подача потока, NDTP, прогнозы, алерты](docs/JURY.md).
 - [Размещение на Render](docs/RENDER.md).
+- [Размещение на Railway без карты](docs/RAILWAY.md).
 - [Производительность и дополнительные функции](docs/PERFORMANCE.md).
 - [Сгенерированный PyDoc](docs/site/index.html).
 - Swagger: /api/docs на сайте, :8000/docs в локальном Compose.

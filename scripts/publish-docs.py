@@ -21,7 +21,7 @@ def render(text):
         elif not line.strip():flush()
         else:paragraph.append(line)
     flush();return ''.join(result)
-for name in ('JURY','PERFORMANCE','RENDER'):
+for name in ('JURY','PERFORMANCE','RENDER','RAILWAY'):
     path=root/'docs'/f'{name}.md'
     if path.exists():(site/f'{name.lower()}.html').write_text(page(name,render(path.read_text(encoding='utf-8'))),encoding='utf-8')
 modules=sorted(site.glob('*.html'))

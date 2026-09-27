@@ -23,7 +23,7 @@ DETECT_STOPS=0. Start command оставьте из образа, порт оп�
 
 Ключи Яндекс/Google можно добавить позже как build arguments VITE_YANDEX_MAPS_API_KEY
 и VITE_GOOGLE_MAPS_API_KEY. Ограничьте browser key доменом своего сайта и разрешёнными API.
-Без ключа сайт продолжает работать с координатной схемой.
+Без ключа API сайт продолжает работать с OpenStreetMap и реальными зонами наблюдений.
 
 Пакет для сдачи: URL системы + ссылка на README репозитория, docs/JURY.md,
 /documentation/ и /api/docs, docs/PERFORMANCE.md. Адрес сайта подставляется после деплоя.
